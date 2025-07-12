@@ -8,9 +8,6 @@ const readline = require('readline');
 
 
 //global variables
-const server = express();
-server.use(express.static('public'));
-const wss = new WebSocketServer({port:8082});
 
 let clientseq = 0;
 let serverseq = 0;
@@ -18,6 +15,27 @@ let streamid = 0;
 
 let tunnel = null;
 let conversationid = null;
+
+const server = express();
+server.use(express.static('public'));
+const httpServer = server.listen(8081, () => {
+             Logger("INFO","AudioConnector Server is running on http://localhost:8081");
+});
+const wss = new WebSocketServer({noServer:true}) ; //new WebSocketServer({port:8082});
+
+
+httpServer.on('upgrade', (request, socket, head) => {
+            console.log(`Received a HTTP upgrade request on ${request.url} from ${request.headers['user-agent']} ${request.headers.origin}`);
+           // console.log(request);
+            //validate request signature todo
+
+            wss.handleUpgrade(request, socket, head, (ws) => {
+                        
+                    wss.emit('connection', ws, request);
+            });
+});
+
+
 
 
 
@@ -137,22 +155,21 @@ wss.on('connection', function connection(ws) {
             else if (jsonmessage.type == 'playback_completed')
             {
 
-               // Logger("XMIT",JSON.stringify(jsonmessage));
+              
             }
             else if (jsonmessage.type == 'playback_started')
             {
 
-              //  Logger("XMIT",JSON.stringify(jsonmessage));
             }
             else if (jsonmessage.type == 'resumed')
             {
 
-              //  Logger("XMIT",JSON.stringify(jsonmessage));
+             
             }
             else if (jsonmessage.type == 'dtmf')
             {
 
-              //  Logger("XMIT",JSON.stringify(jsonmessage));
+             
             }
         } catch(e) 
         {
@@ -376,9 +393,10 @@ function main()
     console.log("  d to end bot session");
     console.log("  q to exit program");
     console.log("");
-    Logger("INFO","AudioConnector Server started.");
     process.stdin.setRawMode(true);
     readline.emitKeypressEvents(process.stdin);
+
+   
 
 }
 
