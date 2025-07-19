@@ -4,7 +4,10 @@ const { WebSocketServer } = require('ws');
 const { json } = require('body-parser');
 const fs = require('fs');
 const readline = require('readline');
-
+const wavefile = require ('wavefile');
+const AudioStreamWriter = require("./audiofilewriter.js"); // Assuming this is the correct path to your AudioStreamWriter class
+const { send } = require('process');
+ 
 
 
 //global variables
@@ -16,28 +19,29 @@ let streamid = 0;
 let tunnel = null;
 let conversationid = null;
 
+const audioWriter = new AudioStreamWriter.AudioStreamWriter('my_recording.wav',{"sampleRate":8000,"channels":1,"bitsPerSample":8});
+
 const server = express();
 server.use(express.static('public'));
 const httpServer = server.listen(8081, () => {
              Logger("INFO","AudioConnector Server is running on http://localhost:8081");
 });
-const wss = new WebSocketServer({noServer:true}) ; //new WebSocketServer({port:8082});
+
+const wss = new WebSocketServer({noServer:true}) ; 
 
 
 httpServer.on('upgrade', (request, socket, head) => {
-            console.log(`Received a HTTP upgrade request on ${request.url} from ${request.headers['user-agent']} ${request.headers.origin}`);
-           // console.log(request);
-            //validate request signature todo
+            Logger("INFO",`Received a HTTP upgrade request on ${request.url} from ${request.headers['user-agent']} full request headers:`);
+            
+            console.log(request.headers);
+            
+            // Here you can add your signature verification logic
 
             wss.handleUpgrade(request, socket, head, (ws) => {
                         
                     wss.emit('connection', ws, request);
             });
 });
-
-
-
-
 
 //event handlers
 process.stdin.on('keypress',(str,key) => {
@@ -46,7 +50,7 @@ process.stdin.on('keypress',(str,key) => {
     {
         case 'q':
             
-           // tunnel.close();
+          
             wss.close();
             Logger("INFO","AudioConnector Server ended.");
             process.exit();
@@ -87,21 +91,27 @@ wss.on('connection', function connection(ws) {
     Logger("INFO","New Websocket Connection");
     clientseq = 1;
 
-    ws.on('message', (message) => {
-        
+    ws.on('message', (data, isBinary) => {   
 
-        let jsonmessage = null;
+
+    if (isBinary) {
+        Logger("RECV","Received binary audio chunk (length " + data.length + ")");
+        audioWriter.addChunk(data); // Add the binary chunk to the audio writer
+    } 
+    else {
+        // Handle events        
+
+        let jsonmessage = null; 
         try {
-            jsonmessage = JSON.parse(message);
-            Logger("RECV",JSON.stringify(jsonmessage));
+            jsonmessage = JSON.parse(data.toString());
+            Logger("RECV",JSON.stringify(jsonmessage,null,2));
             
             //save current server sequence ID in case we need to send a request
             serverseq = jsonmessage.seq;
             streamid = jsonmessage.id;
         
             if(jsonmessage.type == 'open')
-            {
-                
+            { 
                 conversationid = jsonmessage.parameters.conversationId;
 
                 var openedresponse = {
@@ -118,7 +128,7 @@ wss.on('connection', function connection(ws) {
 
                 ws.send(JSON.stringify(openedresponse));
                
-                Logger("XMIT",JSON.stringify(openedresponse));
+                Logger("XMIT",JSON.stringify(openedresponse,null,2));
                  sendAudio("./audiosources/welcome.wav");
                 
             }
@@ -136,7 +146,13 @@ wss.on('connection', function connection(ws) {
                 }
                 ws.send(JSON.stringify(closedresponse));
                
-                Logger("XMIT",JSON.stringify(closedresponse));
+                Logger("XMIT",JSON.stringify(closedresponse,null,2));
+
+                audioWriter.finalize(conversationid); // Creates complete WAV file
+                let result = audioWriter.getInfo(); // Get info about the audio file
+
+                Logger("INFO", result.filename + " created with " + result.chunksReceived + " chunks, total size: " + result.totalBytes + " bytes and  "+ result.estimatedDuration + " seconds duration");
+
             }   
             else if (jsonmessage.type == 'ping')
             {
@@ -150,32 +166,34 @@ wss.on('connection', function connection(ws) {
                     "parameters": { }
                 }
                 ws.send(JSON.stringify(pong));
-                Logger("XMIT",JSON.stringify(pong));
+                Logger("XMIT",JSON.stringify(pong,null,2));
             }
             else if (jsonmessage.type == 'playback_completed')
             {
-
-              
+                // Do something when playback is completed
             }
             else if (jsonmessage.type == 'playback_started')
             {
-
+                // Do something when playback is started
             }
             else if (jsonmessage.type == 'resumed')
             {
-
+                // Do something when stream is resumed
              
             }
             else if (jsonmessage.type == 'dtmf')
             {
-
+                // Handle DTMF events
+                sendAudio("./audiosources/say_again.wav");
+                SendBotTurnEvent("Bot turn response with DTMF");
              
             }
         } catch(e) 
         {
-           // Logger("RECV","Received audio chunk (message length " + message.length); 
-            //mediaStreamSaver.twilioStreamMedia(message);       
+              Logger("ERR",e.toString());
+           
         }
+    }
     });
 
     ws.on('close', () => {
@@ -184,6 +202,7 @@ wss.on('connection', function connection(ws) {
 });
 
 //functions
+
 function Logger(state, data){
     console.log(new Date().toISOString() + " - " + state + " -- " + data );
 }
@@ -209,7 +228,7 @@ function EndBotSession(){
         client.send(JSON.stringify(bye));
      });
 
-    Logger("XMIT",JSON.stringify(bye));
+    Logger("XMIT",JSON.stringify(bye,null,2));
 }
 
 function PauseStream(){
@@ -227,7 +246,7 @@ function PauseStream(){
         client.send(JSON.stringify(message));
      });
 
-    Logger("XMIT",JSON.stringify(message));
+    Logger("XMIT",JSON.stringify(message,null,2));
 }
 
 function BargeInStream(){
@@ -253,7 +272,7 @@ function BargeInStream(){
         client.send(JSON.stringify(bargeInMessage));
      });
 
-    Logger("XMIT",JSON.stringify(bargeInMessage));
+    Logger("XMIT",JSON.stringify(bargeInMessage,null,2));
 
 }
 
@@ -283,7 +302,7 @@ function SendBotTurnEvent(intent){
         wss.clients.forEach(function each(client) {
             client.send(JSON.stringify(botTurnEvent));
          });
-        Logger("XMIT",JSON.stringify(botTurnEvent));
+        Logger("XMIT",JSON.stringify(botTurnEvent,null,2));
 }
 
 function sendAudio(audiopromptfile){
@@ -353,7 +372,7 @@ function sendAgentHandover(audiopromptfile){
                     client.send(JSON.stringify(hand_over_message));
                 });
 
-                Logger("XMIT",JSON.stringify(hand_over_message));
+                Logger("XMIT",JSON.stringify(hand_over_message,null,2));
 
                
             }
@@ -377,7 +396,7 @@ function ResumePausedStream(){
         client.send(JSON.stringify(resumemessage));
      });
 
-    Logger("XMIT",JSON.stringify(resumemessage));
+    Logger("XMIT",JSON.stringify(resumemessage,null,2));
 }
 
 function main()
@@ -399,6 +418,7 @@ function main()
    
 
 }
+
 
 //init
 main();

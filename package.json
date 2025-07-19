@@ -11,7 +11,9 @@
   "description": "",
   "dependencies": {
     "express": "^5.1.0",
+    "fs": "^0.0.1-security",
     "request": "^2.88.2",
+    "wavefile": "^11.0.0",
     "ws": "^8.18.3"
   }
 }
